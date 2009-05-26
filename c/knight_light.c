@@ -46,7 +46,6 @@ void byte_received(void);
 
 void test_lights(void);
 void test_broadcast_ir(void);
-void test_receive_ir(void);
 
 void main(void) {
     init();
@@ -137,8 +136,8 @@ ISR(TIMER1_CAPT_vect) {
         ir_bitmask_in >>= 1;
     }
     if (ir_bitmask_in == 0) {
+        ir_bitmask_in = 0xFF; // Prevent double-calling byte_received()
         byte_received();
-        ir_bitmask_in = 0xFF; // Avoid double-calling
     }
 }
 void byte_received() {
@@ -155,17 +154,6 @@ void byte_received() {
         _delay_ms(1);
     }
     ir_bitmask_in = 0xFF;
-}
-
-/**
- * Testing routines
- */
-void test_broadcast_ir(void) {
-    ir_byte_out--;
-    send_ir_byte();
-}
-void test_receive_ir(void) {
-    
 }
 
 // higher is slower
@@ -188,6 +176,14 @@ void shine(void) {
             BLUE_OFF;
         }
     }
+}
+
+/**
+ * Testing routines
+ */
+void test_broadcast_ir(void) {
+    ir_byte_out--;
+    send_ir_byte();
 }
 
 void test_lights(void) {
