@@ -4,6 +4,7 @@
 #include <util/delay.h>
 #include <stdint.h>
 
+#define UNIT_ID 3
 
 #define IR_STARTBIT_DURATION (.003 * F_CPU)
 #define IR_ZERO_DURATION (.0012 * F_CPU)
@@ -43,6 +44,7 @@ void send_38k_pulse(void);
 void send_ir_0(void);
 void send_ir_1(void);
 void byte_received(void);
+void transmit_id(void);
 
 void test_lights(void);
 void test_broadcast_ir(void);
@@ -50,9 +52,8 @@ void test_broadcast_ir(void);
 void main(void) {
     init();
     while (1) {
-        test_lights();
-        ALL_OFF;
-        test_broadcast_ir();
+        transmit_id();
+        _delay_ms(500);
     }
 }
 void init(void) {
@@ -75,8 +76,9 @@ void init(void) {
     new_timestamp = 0;
     old_timestamp = 0;
     time_interval = 0;
-    sei();
     DEBUG_OFF;
+
+    sei();
 }
 
 /***
@@ -140,7 +142,7 @@ ISR(TIMER1_CAPT_vect) {
         byte_received();
     }
 }
-void byte_received() {
+void byte_received(void) {
     ir_bitmask_in = (1 << 7);
     while (ir_bitmask_in > 0) {
         DEBUG_ON;
@@ -154,6 +156,23 @@ void byte_received() {
         _delay_ms(1);
     }
     ir_bitmask_in = 0xFF;
+
+    ALL_OFF;
+    if (ir_byte_in == 1) {
+        RED_ON;
+    } else if (ir_byte_in == 2) {
+        GREEN_ON;
+    } else if (ir_byte_in == 3) {
+        BLUE_ON;
+    }
+    _delay_ms(100);
+    ALL_OFF;
+}
+void transmit_id(void) {
+    cli();
+    ir_byte_out = UNIT_ID;
+    send_ir_byte();
+    sei();
 }
 
 // higher is slower
