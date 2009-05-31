@@ -4,7 +4,7 @@
 #include <util/delay.h>
 #include <stdint.h>
 
-#define UNIT_ID 3
+#define UNIT_ID 1
 
 #define IR_STARTBIT_DURATION (.003 * F_CPU)
 #define IR_ZERO_DURATION (.0012 * F_CPU)
@@ -51,6 +51,8 @@ void test_broadcast_ir(void);
 
 void main(void) {
     init();
+    test_lights();
+    ALL_OFF;
     while (1) {
         transmit_id();
         _delay_ms(500);
