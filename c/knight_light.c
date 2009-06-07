@@ -18,11 +18,8 @@
 #define BLUE_ON     PORTA &= ~(1 << PA2);
 #define BLUE_OFF    PORTA |= (1 << PA2);
 #define ALL_OFF     RED_OFF; GREEN_OFF; BLUE_OFF;
-#define IR_ON       PORTA &= ~(1 << PA3);
-#define IR_OFF      PORTA |= (1 << PA3);
-// Arbitrary pin for toggling to scope
-#define DEBUG_ON    PORTA |= (1 << PA5);
-#define DEBUG_OFF   PORTA &= ~(1 << PA5);
+#define IR_ON       PORTA &= ~((1 << PA3) | (1 << PA4));
+#define IR_OFF      PORTA |= ((1 << PA3) | (1 << PA4));
 
 uint8_t i, j; // loop vars
 uint8_t pulse_count;
@@ -54,6 +51,7 @@ void main(void) {
     test_lights();
     ALL_OFF;
     while (1) {
+        //test_lights();
         transmit_id();
         _delay_ms(500);
     }
@@ -78,7 +76,6 @@ void init(void) {
     new_timestamp = 0;
     old_timestamp = 0;
     time_interval = 0;
-    DEBUG_OFF;
 
     sei();
 }
@@ -95,9 +92,9 @@ void send_38k_pulse(void) {
     // .2ms long pulse of 38kHz.
     for (pulse_count = 8; pulse_count > 0; pulse_count--) {
         IR_ON;
-        _delay_ms(0.0123);
+        _delay_ms(0.00246);
         IR_OFF;
-        _delay_ms(0.0123);
+        _delay_ms(0.02214);
     }
 }
 void send_ir_0(void) {
@@ -147,14 +144,12 @@ ISR(TIMER1_CAPT_vect) {
 void byte_received(void) {
     ir_bitmask_in = (1 << 7);
     while (ir_bitmask_in > 0) {
-        DEBUG_ON;
         if (ir_byte_in & ir_bitmask_in) {
             _delay_ms(1);
         } else {
             _delay_ms(2);
         }
         ir_bitmask_in >>= 1;
-        DEBUG_OFF;
         _delay_ms(1);
     }
     ir_bitmask_in = 0xFF;
