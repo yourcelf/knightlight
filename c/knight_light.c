@@ -4,7 +4,7 @@
 #include <util/delay.h>
 #include <stdint.h>
 
-#define UNIT_ID 1
+#define UNIT_ID 3
 
 #define IR_STARTBIT_DURATION (.003 * F_CPU)
 #define IR_ZERO_DURATION (.0012 * F_CPU)
@@ -18,8 +18,9 @@
 #define BLUE_ON     PORTA &= ~(1 << PA2);
 #define BLUE_OFF    PORTA |= (1 << PA2);
 #define ALL_OFF     RED_OFF; GREEN_OFF; BLUE_OFF;
-#define IR_ON       PORTA &= ~((1 << PA3) | (1 << PA4));
-#define IR_OFF      PORTA |= ((1 << PA3) | (1 << PA4));
+// IR routines; works for all 3 board types
+#define IR_ON       PORTA &= ~((1 << PA3) | (1 << PA4)); PORTA |= (1 << PA5);
+#define IR_OFF      PORTA |= ((1 << PA3) | (1 << PA4)); PORTA &= ~(1 << PA5);
 
 uint8_t i, j; // loop vars
 uint8_t pulse_count;
@@ -63,7 +64,7 @@ void init(void) {
         CLKPR = (0 << CLKPS3)|(0 << CLKPS2)|(0 << CLKPS1)|(0 << CLKPS0);
     }
     // Init LEDs (all on PORTA)
-    PORTA = 0xFF;
+    PORTA = 0xFF & ~(1 << PA5);
     DDRA = 0xFF;
     
     // Init input capture pin timer for IR receive
