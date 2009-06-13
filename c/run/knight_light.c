@@ -1,13 +1,8 @@
-#ifndef UNIT_ID
-#define UNIT_ID 0
-#endif
-
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #define F_CPU 1000000
 #include <util/delay.h>
 #include <stdint.h>
-#define RAND_MAX 25000
 #include <stdlib.h>
 
 // Higher is slower
@@ -16,20 +11,23 @@
 #define DUTY_DIVISOR 2 
 
 #define BLINKS_BEFORE_TIMEOUT 10
+#define BLINKS_BEFORE_COLOR_CHANGE 3
+// Higher is longer
+#define POST_BLINK_DELAY 1000
+// higher is sloppier, lower is more collisions
+#define PRE_BLINK_DELAY 50000
 
 // in milliseconds
-#define ZERO_DURATION .25
-#define ONE_DURATION .5
-#define TWO_DURATION .75
+#define RED_DURATION .25
+#define GREEN_DURATION .5
+#define BLUE_DURATION .75
+
+#define NUM_COLORS 3
+
 #define POST_SEND_DELAY .25
-#define BIT_WIDTH_FUDGE_FACTOR .265
-// delays in clock cycles
-#define CLOCK_ZERO_DURATION ((ZERO_DURATION + BIT_WIDTH_FUDGE_FACTOR) / 1000. * F_CPU)
-#define CLOCK_ONE_DURATION ((ONE_DURATION + BIT_WIDTH_FUDGE_FACTOR) / 1000. * F_CPU)
-#define CLOCK_TWO_DURATION ((TWO_DURATION + BIT_WIDTH_FUDGE_FACTOR) / 1000. * F_CPU)
-// percentage
-#define TOLERANCE .3
-#define DUR_IN_RANGE(dur, constant) ((dur > (int)(constant * (1 - TOLERANCE))) && (dur < (int)(constant * (1 + TOLERANCE))))
+
+#define DUR_FUDGE_FACTOR 0.5
+#define DUR_IN_RANGE(dur, constant) (dur < (((constant + DUR_FUDGE_FACTOR) / 1000) * F_CPU))
 
 #define RED_ON      PORTA &= ~(1 << PA0);
 #define RED_OFF     PORTA |= (1 << PA0);
@@ -43,27 +41,30 @@
 #define IR_ON       PORTA &= ~((1 << PA3) | (1 << PA4)); PORTA |= (1 << PA5);
 #define IR_OFF      PORTA |= ((1 << PA3) | (1 << PA4)); PORTA &= ~(1 << PA5);
 
+#define RED   0
+#define GREEN 1
+#define BLUE  2
+
 uint8_t i, total_duty; // loop vars
 uint8_t pulse_count;
 uint8_t timeout_count;
-uint8_t green_count, red_count, blue_count, total_count;
-uint16_t green_duty, red_duty, blue_duty;
+uint8_t color;
+uint16_t green_duty, red_duty, blue_duty, duty_duty;
 
 // IR i/o
-uint8_t ir_byte_out;
-uint8_t ir_byte_in;
 
 uint8_t receptive;
-
+uint8_t lose_immunity;
+uint8_t immune;
 uint16_t new_timestamp, old_timestamp, time_interval;
-uint16_t random_delay_1;
-uint16_t random_delay_2;
+uint16_t delay_1;
+uint16_t delay_2;
 
 // Function prototypes
 void init(void);
-void reset_stack_pointer(void);
+void receptive_sleep_delay(void);
+void randomize_color(void);
 void cycle(void);
-void degrade(void);
 void transmit_id(void);
 void send_38k_pulse(void);
 void byte_received(void);
@@ -71,20 +72,31 @@ void byte_received(void);
 
 int main(void) {
     init();
-    reset_stack_pointer();
+    timeout_count = BLINKS_BEFORE_TIMEOUT;
+    for (;;) {
+        for (; timeout_count > 0; timeout_count--) {
+            if (timeout_count == (BLINKS_BEFORE_TIMEOUT - BLINKS_BEFORE_COLOR_CHANGE)) {
+                randomize_color();
+            }
+            cycle();
+        }
+        receptive_sleep_delay();
+        transmit_id();
+    }
     return 0;
 }
-void reset_stack_pointer() {
-    asm volatile("mov __tmp_reg__, r16\n"
-                 "ldi r16, 0x1\n"
-                 "out __SP_H__, r16\n"
-                 "ldi r16, 0x00\n"
-                 "out __SP_L__, r16\n" 
-                 "mov r16, __tmp_reg__\n");
-    for (timeout_count=BLINKS_BEFORE_TIMEOUT; timeout_count > 0; timeout_count--) {
-        cycle();
+void receptive_sleep_delay(void) {
+    receptive = 1;
+    for (delay_1 = 255; delay_1 > 0; delay_1--) {
+        _delay_ms(1000);
+        GREEN_OFF; // argh compiler.  Makes the following work.
+        // Required to avoid compiler optimization that breaks cross-thread
+        // variable update
+        asm volatile("lds __tmp_reg__, %0" "\n\t"
+                     "sbrs __tmp_reg__, 0" "\n\t"
+                     "ret" "\n\t"
+                     :: "i" (& receptive));
     }
-    for (;;);
 }
 void init(void) {
     // Init LED
@@ -103,77 +115,56 @@ void init(void) {
     old_timestamp = 0;
     time_interval = 0;
 
-    red_count = 0;
-    green_count = 0;
-    blue_count = 0;
-    total_count = 0;
     receptive = 0;
-    degrade();
 
     sei();
 }
 
-void degrade(void) {
-    if (red_count > 0) {
-        red_count--;
-        total_count--;
-    }
-    if (green_count > 0) {
-        green_count--;
-        total_count--;
-    }
-    if (blue_count > 0) {
-        blue_count--;
-        total_count--;
-    }
-    if (total_count == 0) {
-#if UNIT_ID == 0
-        red_count = 1;
-#elif UNIT_ID == 1
-        green_count = 1;
-#elif UNIT_ID == 2
-        blue_count = 1;
-#endif
-        total_count = red_count + blue_count + green_count;
-    }
-
-}
 void shine(void) {
-    if (total_count > 0) {
-        red_duty = (total_duty * red_count) / (total_count * DUTY_DIVISOR);
-        green_duty = (total_duty * green_count) / (total_count * DUTY_DIVISOR);
-        blue_duty = (total_duty * blue_count) / (total_count * DUTY_DIVISOR);
-        for (i = 0; i < MAX_DUTY; i++) {
-            if (i < red_duty) {
-                RED_ON;
-            } else {
-                RED_OFF;
-            }
-            if (i < green_duty) {
-                GREEN_ON;
-            } else {
-                GREEN_OFF;
-            }
-            if (i < blue_duty) {
-                BLUE_ON;
-            } else {
-                BLUE_OFF;
-            }
+    duty_duty = total_duty / (DUTY_DIVISOR);
+    if (color == RED) {
+        red_duty = duty_duty;
+        green_duty = 0;
+        blue_duty = 0;
+    } else if (color == GREEN) {
+        red_duty = 0;
+        green_duty = duty_duty;
+        blue_duty = 0;
+    } else if (color == BLUE) {
+        red_duty = 0;
+        green_duty = 0;
+        blue_duty = duty_duty;
+    }
+    for (i = 0; i < MAX_DUTY; i++) {
+        if (i < red_duty) {
+            RED_ON;
+        } else {
+            RED_OFF;
+        }
+        if (i < green_duty) {
+            GREEN_ON;
+        } else {
+            GREEN_OFF;
+        }
+        if (i < blue_duty) {
+            BLUE_ON;
+        } else {
+            BLUE_OFF;
         }
     }
 }
 void cycle(void) {
     receptive = 0;
-    
-    random_delay_1 = rand();
-    random_delay_2 = RAND_MAX - random_delay_1;
+    delay_1 = rand() % PRE_BLINK_DELAY;
+    delay_2 = PRE_BLINK_DELAY - delay_1;
+    //srand(TCNT1);
     // delay to avoid collisions in id transmission
-    for (; random_delay_1 > 0; random_delay_1--) {
+    for (; delay_1 > 0; delay_1--) {
         asm volatile("nop\n\t");
     }
     transmit_id();
     // delay for complement, so timing stays roughly consistent
-    for (; random_delay_2 > 0; random_delay_2--) {
+    for (; delay_2 > 0; delay_2--) {
         asm volatile("nop\n\t");
     }
 
@@ -183,9 +174,34 @@ void cycle(void) {
     for (total_duty = MAX_DUTY; total_duty > 0; total_duty--) {
         shine();
     }
-    degrade();
     receptive = 1;
-    _delay_ms(1000);
+    for (delay_1 = POST_BLINK_DELAY; delay_1 > 0; delay_1--) {
+        _delay_ms(1);
+        // If we don't do this with ASM, the compiler will abstract away the
+        // SRAM to a register, and won't see when it is updated in the
+        // interrupt.
+        // equivalent:
+        // if (receptive == 0) {
+        //    return;
+        // }
+        asm volatile("lds __tmp_reg__, %0" "\n\t"
+                     "sbrs __tmp_reg__, 0" "\n\t"
+                     "ret" "\n\t"
+                     :: "i" (& receptive));
+
+
+    }
+    if (lose_immunity) {
+        immune = 0;
+    }
+}
+void randomize_color(void) {
+    uint8_t old_color = color;
+    color = rand() % NUM_COLORS;
+    if (old_color == color) {
+        color = (color + 1) % NUM_COLORS;
+    }
+    immune = 1;
 }
 
 /***
@@ -203,13 +219,13 @@ void send_38k_pulse(void) {
 void transmit_id(void) {
     cli();
     send_38k_pulse();
-#if UNIT_ID == 0
-    _delay_ms(ZERO_DURATION);
-#elif UNIT_ID == 1
-    _delay_ms(ONE_DURATION);
-#elif UNIT_ID == 2
-    _delay_ms(TWO_DURATION);
-#endif
+    if (color == RED) {
+        _delay_ms(RED_DURATION);
+    } else if (color == GREEN) {
+        _delay_ms(GREEN_DURATION);
+    } else if (color == BLUE) {
+        _delay_ms(BLUE_DURATION);
+    }
     send_38k_pulse();
     _delay_ms(POST_SEND_DELAY);
     sei();
@@ -220,20 +236,23 @@ ISR(TIMER1_CAPT_vect) {
     time_interval = new_timestamp - old_timestamp;
     old_timestamp = new_timestamp;
 
-    if (DUR_IN_RANGE(time_interval, CLOCK_ZERO_DURATION)) {
-        red_count++;
-        total_count++;
-    } else if (DUR_IN_RANGE(time_interval, CLOCK_ONE_DURATION)) {
-        green_count++;
-        total_count++;
-    } else if (DUR_IN_RANGE(time_interval, CLOCK_TWO_DURATION)) {
-        blue_count++;
-        total_count++;
+    if (DUR_IN_RANGE(time_interval, RED_DURATION)) {
+        if (immune == 0) {
+            color = RED;
+        }
+    } else if (DUR_IN_RANGE(time_interval, GREEN_DURATION)) {
+        if (immune == 0) {
+            color = GREEN;
+        }
+    } else if (DUR_IN_RANGE(time_interval, BLUE_DURATION)) {
+        if (immune == 0) {
+            color = BLUE;
+        }
     } else {
         return;
     }
 
-    if (receptive) {
-        reset_stack_pointer();
-    }
+    lose_immunity = 1;
+    timeout_count = BLINKS_BEFORE_TIMEOUT;
+    receptive = 0;
 }
