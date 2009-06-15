@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#define DIAGNOSTIC_BEACON 0
+
 // Higher is slower
 #define MAX_DUTY 180
 // Lower is brighter
@@ -56,12 +58,15 @@ uint16_t green_duty, red_duty, blue_duty, duty_duty;
 uint8_t receptive;
 uint8_t lose_immunity;
 uint8_t immune;
+uint8_t diagnostic;
 uint16_t new_timestamp, old_timestamp, time_interval;
 uint16_t delay_1;
 uint16_t delay_2;
 
 // Function prototypes
 void init(void);
+void diagnostics(void);
+void diagnostic_beacon(void);
 void receptive_sleep_delay(void);
 void randomize_color(void);
 void cycle(void);
@@ -72,6 +77,11 @@ void byte_received(void);
 
 int main(void) {
     init();
+#if DIAGNOSTIC_BEACON == 1
+    diagnostic_beacon();
+#endif
+    diagnostics();
+
     timeout_count = BLINKS_BEFORE_TIMEOUT;
     for (;;) {
         for (; timeout_count > 0; timeout_count--) {
@@ -85,6 +95,33 @@ int main(void) {
     }
     return 0;
 }
+void diagnostics(void) {
+    cli();
+    RED_ON;
+    _delay_ms(100);
+    RED_OFF;
+    _delay_ms(100);
+    GREEN_ON;
+    _delay_ms(100);
+    GREEN_OFF;
+    _delay_ms(100);
+    BLUE_ON;
+    _delay_ms(100);
+    BLUE_OFF;
+    _delay_ms(100);
+    
+    cli();
+    color = RED;
+    transmit_id();
+    _delay_ms(500);
+    color = GREEN;
+    transmit_id();
+    _delay_ms(500);
+    color = BLUE;
+    transmit_id();
+    _delay_ms(500);
+}
+
 void receptive_sleep_delay(void) {
     receptive = 1;
     for (delay_1 = 255; delay_1 > 0; delay_1--) {
@@ -230,6 +267,20 @@ void transmit_id(void) {
     _delay_ms(POST_SEND_DELAY);
     sei();
 }
+void diagnostic_beacon(void) {
+    diagnostic = 1;
+    for (;;) {
+        color = RED;
+        transmit_id();
+        _delay_ms(500);
+        color = GREEN;
+        transmit_id();
+        _delay_ms(500);
+        color = BLUE;
+        transmit_id();
+        _delay_ms(500);
+    }
+}
 // Receive data from IR decoder
 ISR(TIMER1_CAPT_vect) {
     new_timestamp = ICR1;
@@ -251,8 +302,19 @@ ISR(TIMER1_CAPT_vect) {
     } else {
         return;
     }
-
+#if DIAGNOSTIC_BEACON == 1
+    if (color == RED) {
+        RED_ON;
+    } else if (color == GREEN) {
+        GREEN_ON;
+    } else if (color == BLUE) {
+        BLUE_ON;
+    }
+    _delay_ms(100);
+    ALL_OFF;
+#else
     lose_immunity = 1;
     timeout_count = BLINKS_BEFORE_TIMEOUT;
     receptive = 0;
+#endif
 }
